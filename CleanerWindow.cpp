@@ -606,6 +606,13 @@ void WorkerThread::initialiseHoiSummaries () {
 	  totalNavy += weight; 
 	}
       }
+      objvec airs = (*army)->getValue("air");
+      for (objiter air = airs.begin(); air != airs.end(); ++air) {
+	objvec wings = (*air)->getValue("wing");
+	for (objiter wing = wings.begin(); wing != wings.end(); ++wing) {
+	  hoiUnitTypes[remQuotes((*wing)->safeGetString("type"))]++; 
+	}
+      }
     }
     (*leaf)->resetLeaf("army_size", totalArmy);
     if (totalArmy > maxArmy) maxArmy = totalArmy;
@@ -693,10 +700,6 @@ void WorkerThread::initialiseVicSummaries () {
     (*vc)->resetLeaf("avg_mil", (*vc)->safeGetFloat("avg_mil") / (1 + (*vc)->safeGetInt("totalPop")));
     objvec armies = (*vc)->getValue("army");
     double totalArmy = 0;
-    Object* armyLocations = new Object("armyLocations");
-    Object* regimentNames = new Object("regimentNames");
-    (*vc)->setValue(armyLocations);
-    (*vc)->setValue(regimentNames); 
     for (objiter army = armies.begin(); army != armies.end(); ++army) {
       objvec regiments = (*army)->getValue("regiment");
       for (objiter regiment = regiments.begin(); regiment != regiments.end(); ++regiment) {
@@ -706,16 +709,16 @@ void WorkerThread::initialiseVicSummaries () {
 	pop = popIdMap[pop->safeGetString("id")];
 	if (!pop) continue;
 	string regType = (*regiment)->safeGetString("type");
-	if (pop->getKey() != "soldiers") regType = "reserve"; 	
+	if (pop->getKey() != "soldiers") regType = "reserve";
+	vicCountryToUnitsMap[*vc][regType].push_back(*regiment);
 	(*vc)->resetLeaf(regType, (*vc)->safeGetInt(regType) + 1);
 	vicUnitTypes[regType]++;
-	vicUnitsThatConvertToHoIUnits[unitTypes->safeGetString(regType, "NONE")]++;
-	regimentNames->addToList((*regiment)->safeGetString("name"));
+	objvec conversions = unitTypes->getValue(regType);
+	for (objiter con = conversions.begin(); con != conversions.end(); ++con) {
+	  vicUnitsThatConvertToHoIUnits[(*con)->getLeaf()]++; 
+	}
 	string vicLocation = (*army)->safeGetString("location");
-	Object* vicProv = vicProvIdToVicProvMap[vicLocation];
-	if (!vicProv) continue;
-	if (NO_OWNER == vicProv->safeGetString("owner", NO_OWNER)) continue; // Probably a sea province.
-	armyLocations->addToList(vicLocation);	
+	(*regiment)->resetLeaf("location", vicLocation); 
       }
     }
     (*vc)->resetLeaf("army_size", totalArmy);
@@ -1242,6 +1245,25 @@ bool WorkerThread::convertDiplomacy () {
 bool WorkerThread::convertGovernments () {
   Logger::logStream(Logger::Game) << "Beginning government conversion.\n";
   objvec resemblances;
+
+  map<string, Object*> govMap; 
+  for (objiter oc = allHoiCountries.begin(); oc != allHoiCountries.end(); ++oc) {
+    Object* government = new Object("government");
+    govMap[(*oc)->getKey()] = government;
+    government->setValue((*oc)->safeGetObject("ministers"));
+    government->setLeaf("government", (*oc)->safeGetString("government"));
+    government->setLeaf("head_of_state", (*oc)->safeGetString("head_of_state"));
+    government->setLeaf("head_of_government", (*oc)->safeGetString("head_of_government"));
+    government->setLeaf("foreign_minister", (*oc)->safeGetString("foreign_minister"));
+    government->setLeaf("armament_minister", (*oc)->safeGetString("armament_minister"));
+    government->setLeaf("minister_of_security", (*oc)->safeGetString("minister_of_security"));
+    government->setLeaf("minister_of_intelligence", (*oc)->safeGetString("minister_of_intelligence"));
+    government->setLeaf("chief_of_staff", (*oc)->safeGetString("chief_of_staff"));
+    government->setLeaf("chief_of_army", (*oc)->safeGetString("chief_of_army"));
+    government->setLeaf("chief_of_navy", (*oc)->safeGetString("chief_of_navy"));
+    government->setLeaf("chief_of_air", (*oc)->safeGetString("chief_of_air"));
+  }
+  
   for (objiter nc = hoiCountries.begin(); nc != hoiCountries.end(); ++nc) {
     setPointersFromHoiCountry(*nc);
     for (objiter oc = allHoiCountries.begin(); oc != allHoiCountries.end(); ++oc) {
@@ -1259,40 +1281,38 @@ bool WorkerThread::convertGovernments () {
   ObjectDescendingSorter sorter("value");
   sort(resemblances.begin(), resemblances.end(), sorter);
   map<string, string> mappedCountries;
-  map<string, string> usedCountries; // Can't reuse mappedCountries because a country may need a new government when its old one has been used. 
   for (objiter r = resemblances.begin(); r != resemblances.end(); ++r) {
     hoiTag = (*r)->safeGetString("newCountry");
     if (mappedCountries[hoiTag] != "") continue;
     hoiCountry = hoiTagToHoiCountryMap[hoiTag];
     if (0 == hoiCountryToHoiProvsMap[hoiCountry].size()) continue; 
     string oldTag = (*r)->safeGetString("oldCountry");
-    if (usedCountries[oldTag] != "") continue;
-    Object* oldCountry = hoiGame->safeGetObject(oldTag);
-    setPointersFromHoiCountry(hoiCountry);
-
-    if (!swap(oldCountry, hoiCountry, "ministers")) continue;
+    Object* newGov = govMap[oldTag];
+    if (newGov->safeGetString("used", "no") == "yes") continue;
+    setPointersFromHoiCountry(hoiCountry); 
+    newGov->resetLeaf("used", "yes");
+    mappedCountries[hoiTag] = oldTag; 
     Logger::logStream(DebugGovernments) << "Vic country "
 					<< vicTag
 					<< " (HoI "
 					<< hoiTag
 					<< ") getting government of historical "
-					<< oldCountry->getKey()
+					<< oldTag 
 					<< " from resemblance "
 					<< (*r)->safeGetString("value")
 					<< ".\n";
-    mappedCountries[hoiTag] = oldTag;
-    usedCountries[oldTag] = hoiTag; 
-    swap(oldCountry, hoiCountry, "government");
-    swap(oldCountry, hoiCountry, "head_of_state");
-    swap(oldCountry, hoiCountry, "head_of_government");
-    swap(oldCountry, hoiCountry, "foreign_minister");
-    swap(oldCountry, hoiCountry, "armament_minister");
-    swap(oldCountry, hoiCountry, "minister_of_security");
-    swap(oldCountry, hoiCountry, "minister_of_intelligence");
-    swap(oldCountry, hoiCountry, "chief_of_staff");
-    swap(oldCountry, hoiCountry, "chief_of_army");
-    swap(oldCountry, hoiCountry, "chief_of_navy");
-    swap(oldCountry, hoiCountry, "chief_of_air");
+    swap(newGov, hoiCountry, "ministers");
+    swap(newGov, hoiCountry, "government");
+    swap(newGov, hoiCountry, "head_of_state");
+    swap(newGov, hoiCountry, "head_of_government");
+    swap(newGov, hoiCountry, "foreign_minister");
+    swap(newGov, hoiCountry, "armament_minister");
+    swap(newGov, hoiCountry, "minister_of_security");
+    swap(newGov, hoiCountry, "minister_of_intelligence");
+    swap(newGov, hoiCountry, "chief_of_staff");
+    swap(newGov, hoiCountry, "chief_of_army");
+    swap(newGov, hoiCountry, "chief_of_navy");
+    swap(newGov, hoiCountry, "chief_of_air");
   }
 
   Logger::logStream(Logger::Game) << "Done with governments.\n"; 
@@ -1505,10 +1525,10 @@ Object* createObjectWithIdAndType (int id, int type, string keyword) {
   return ret; 
 }
 
-Object* WorkerThread::createRegiment (int id, string type, string name) {
+Object* WorkerThread::createRegiment (int id, string type, string name, string keyword) {
   static Object* strengths = configObject->getNeededObject("unitStrengths");
   
-  Object* ret = createObjectWithIdAndType(id, 41, "regiment");
+  Object* ret = createObjectWithIdAndType(id, 41, keyword);
   ret->setLeaf("type", addQuotes(type));
   ret->setLeaf("name", addQuotes(name));
   if (0 < strengths->safeGetFloat(type, -1)) ret->setLeaf("strength", strengths->safeGetString(type)); 
@@ -1518,7 +1538,7 @@ Object* WorkerThread::createRegiment (int id, string type, string name) {
 void WorkerThread::makeHigher (objvec& lowHolder, int& numUnits, string name, string location, string keyword, objvec& highHolder) {
   Object* higher = createObjectWithIdAndType(numUnits++, 41, keyword);
   if (keyword != "division") {
-    Object* hq = createRegiment(numUnits++, "hq_brigade", remQuotes(name) + " HQ");
+    Object* hq = createRegiment(numUnits++, "hq_brigade", remQuotes(name) + " HQ", "regiment");
     //hq->setLeaf("location", location); 
     higher->setValue(hq); 
   } 
@@ -1528,16 +1548,11 @@ void WorkerThread::makeHigher (objvec& lowHolder, int& numUnits, string name, st
   while (0 < lowHolder.size()) higher->setValue(pop(lowHolder));
 }
 
-string WorkerThread::selectRandomHoiProvince (Object* vicLocations, Object* hoiCountry) {
-  int counter = 0;
-  while (true) {
-    if (counter++ > 1000) break;
-    string vicLocation = vicLocations->getToken(rand() % vicLocations->numTokens());
-    Object* vicProv = vicProvIdToVicProvMap[vicLocation];
-    Object* hoiProv = vicProvToHoiProvsMap[vicProv][rand() % vicProvToHoiProvsMap[vicProv].size()];
-    if (!hoiProv) continue;
-    if (NO_OWNER == hoiProv->safeGetString("owner", NO_OWNER)) continue;
-    return hoiProv->getKey();
+string WorkerThread::selectHoiProvince (string vicLocation, Object* hoiCountry) {
+  Object* vicProv = vicProvIdToVicProvMap[vicLocation];
+  for (objiter hoiProv = vicProvToHoiProvsMap[vicProv].begin(); hoiProv != vicProvToHoiProvsMap[vicProv].end(); ++hoiProv) {   
+    if (NO_OWNER == (*hoiProv)->safeGetString("owner", NO_OWNER)) continue;
+    return (*hoiProv)->getKey();
   }
   return hoiCountry->safeGetString("capital"); 
 }
@@ -1594,6 +1609,9 @@ bool WorkerThread::convertOoBs () {
   }
 
   Object* hoiDivisionNames = configObject->getNeededObject("hoiDivNames"); 
+  Object* airUnits = configObject->getNeededObject("airUnits");
+  map<string, bool> airUnitMap;
+  for (int i = 0; i < airUnits->numTokens(); ++i) airUnitMap[airUnits->getToken(i)] = true; 
   
   int numUnits = 1;
   objvec unitTypes = unitConversions->getLeaves();
@@ -1612,7 +1630,7 @@ bool WorkerThread::convertOoBs () {
     theatre->setLeaf("can_upgrade", "yes");
     theatre->setLeaf("fuel", "1.000");
     theatre->setLeaf("supplies", "1.000");
-    theatre->setValue(createRegiment(numUnits++, "hq_brigade", "High Command"));
+    theatre->setValue(createRegiment(numUnits++, "hq_brigade", "High Command", "regiment"));
     objvec divHolder;
     objvec corHolder;
     objvec armHolder;
@@ -1620,41 +1638,69 @@ bool WorkerThread::convertOoBs () {
     int corCounter = 1;
     int armCounter = 1;
     int groCounter = 1;
-    Object* names = vicCountry->safeGetObject("regimentNames");
-    Object* locations = vicCountry->safeGetObject("armyLocations"); 
+    
     for (objiter ut = unitTypes.begin(); ut != unitTypes.end(); ++ut) {
       string vicUnitName = (*ut)->getKey();
-      string hoiUnitName = (*ut)->getLeaf(); 
-      double vicUnits = vicCountry->safeGetInt(vicUnitName);
+      string hoiUnitName = (*ut)->getLeaf();
+      double vicUnits = vicCountryToUnitsMap[vicCountry][vicUnitName].size();
       if (0.1 > vicUnits) continue;
+      Logger::logStream(Logger::Debug) << vicUnits << " ";
       vicUnits /= vicUnitsThatConvertToHoIUnits[hoiUnitName];
+      Logger::logStream(Logger::Debug) << vicUnits << " ";
       vicUnits *= hoiUnitTypes[hoiUnitName];
+      Logger::logStream(Logger::Debug) << vicUnits << "\n";
       if (0.01 > vicUnits) continue;
       if (1 > vicUnits) vicUnits = 1;
       int unitsToGenerate = (int) floor(vicUnits + 0.5);
       Logger::logStream(DebugUnits) << vicTag << " (HoI " << hoiTag << ") gets "
 				    << unitsToGenerate << " " << hoiUnitName
 				    << " from " << vicCountry->safeGetInt(vicUnitName) << " " << vicUnitName << ".\n";
+      Object* air = 0;
+      if (airUnitMap[hoiUnitName]) {
+	air = theatre->safeGetObject("air");
+	if (!air) {
+	  air = createObjectWithIdAndType(numUnits++, 41, "air");
+	  theatre->setValue(air);
+	  air->setLeaf("name", "\"Air Force\""); 
+	  air->setLeaf("base", hoiCap);
+	  air->setLeaf("location", hoiCap);
+	}
+      }
       objvec regHolder;
       int divCounter = 1;
+      objiter baseVicUnit = vicCountryToUnitsMap[vicCountry][vicUnitName].begin(); 
       for (int i = 0; i < unitsToGenerate; ++i) {
-	regHolder.push_back(createRegiment(numUnits++, hoiUnitName, remQuotes(names->getToken(rand() % names->numTokens())))); 
+	Object* underlyingVicUnit = (*baseVicUnit);
+	++baseVicUnit;
+	if (baseVicUnit == vicCountryToUnitsMap[vicCountry][vicUnitName].end()) baseVicUnit = vicCountryToUnitsMap[vicCountry][vicUnitName].begin();
+	int numCreated = underlyingVicUnit->safeGetInt("createdHoiUnits");
+	++numCreated;
+	underlyingVicUnit->resetLeaf("createdHoiUnits", numCreated);
+	sprintf(stringbuffer, "%i / %s", numCreated, remQuotes(underlyingVicUnit->safeGetString("name")).c_str());
+	Object* regiment = createRegiment(numUnits++, hoiUnitName, stringbuffer, air ? "wing" : "regiment");
+	if (air) {
+	  air->setValue(regiment);
+	  continue;
+	}
+	regHolder.push_back(regiment);
+	string vicLocation = underlyingVicUnit->safeGetString("location");
+	string hoiLocation = selectHoiProvince(vicLocation, hoiCountry);
 	
 	if (3 <= regHolder.size()) {
 	  string name = addQuotes(ordinal(divCounter++) + " " + remQuotes(hoiDivisionNames->safeGetString(hoiUnitName, "Division")));
-	  makeHigher(regHolder, numUnits, name, selectRandomHoiProvince(locations, hoiCountry), "division", divHolder);
+	  makeHigher(regHolder, numUnits, name, hoiLocation, "division", divHolder);
 	}
 	if (3 <= divHolder.size()) {
 	  string name = addQuotes(ordinal(corCounter++) + " Corps");
-	  makeHigher(divHolder, numUnits, name, selectRandomHoiProvince(locations, hoiCountry), "corps", corHolder);
+	  makeHigher(divHolder, numUnits, name, hoiLocation, "corps", corHolder);
 	}
 	if (3 <= corHolder.size()) {
 	  string name = addQuotes(ordinal(armCounter++) + " Army");
-	  makeHigher(corHolder, numUnits, name, selectRandomHoiProvince(locations, hoiCountry), "army", armHolder);
+	  makeHigher(corHolder, numUnits, name, hoiLocation, "army", armHolder);
 	}
 	if (3 <= armHolder.size()) {
 	  string name = addQuotes(ordinal(groCounter++) + " Army Group");
-	  makeHigher(armHolder, numUnits, name, selectRandomHoiProvince(locations, hoiCountry), "armygroup", groHolder);
+	  makeHigher(armHolder, numUnits, name, hoiLocation, "armygroup", groHolder);
 	}
       }
       
@@ -2017,6 +2063,15 @@ bool WorkerThread::moveIndustry () {
   Object* prices = vicGame->getNeededObject("worldmarket");
   prices = prices->getNeededObject("price_pool"); 
   map<string, map<string, bool> > printedWarnings; 
+
+  map<string, bool> warIndustries;
+  map<string, bool> heavyIndustries;
+  Object* warFactories = configObject->getNeededObject("war_industry");
+  for (int i = 0; i < warFactories->numTokens(); ++i) warIndustries[warFactories->getToken(i)] = true;
+  warFactories = configObject->getNeededObject("heavy_industry");
+  for (int i = 0; i < warFactories->numTokens(); ++i) heavyIndustries[warFactories->getToken(i)] = true;
+  double warBonus = configObject->safeGetFloat("warIndustryBonus", 1.2);
+  double heavyBonus = configObject->safeGetFloat("heavyIndustryBonus", 1.1);
   
   double totalVicIndustry = 0;
   for (objiter vc = vicCountries.begin(); vc != vicCountries.end(); ++vc) {
@@ -2068,10 +2123,12 @@ bool WorkerThread::moveIndustry () {
 	}
 	double revenuePerWorker = revenue / workers;
 	Logger::logStream(DebugIndustry) << "Revenue per worker in "
-					 << (*f)->safeGetString("building") << " in state "
+					 << factoryType << " in state "
 					 << (*state)->safeGetObject("id")->safeGetString("id")
 					 << " is " << revenuePerWorker << ".\n"; 
 	if (revenuePerWorker < minimumRevenueRate) revenuePerWorker = minimumRevenueRate;
+	if (warIndustries[factoryType]) revenuePerWorker *= warBonus;
+	else if (heavyIndustries[factoryType]) revenuePerWorker *= heavyBonus; 
 	if (0 > revenue) unemployed += workers;
 	else stateWeight += revenuePerWorker * workers;
 	inFactories += workers;
