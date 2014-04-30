@@ -7,7 +7,7 @@ debug = {
   34 = no # Strategic resources 
   35 = no # Techs 
   36 = no # Buildings 
-  37 = no # Units 
+  37 = yes # Units 
   38 = no # Stockpiles 
   39 = no # Laws
   40 = no # Misc
@@ -19,7 +19,7 @@ debug = {
   46 = no # Culture
   47 = no # Religion 
   48 = no # Governments 
-  49 = yes # Industry 
+  49 = no # Industry 
   50 = no # Urban terrain 
   51 = no # Diplomacy  
   52 = no # Resources 
@@ -88,8 +88,8 @@ fightingClasses = {
 
 officerClasses = {
   class = officers
-  class = soldiers
-  class = aristocrats
+  class = clerks
+  class = clergy 
 }
 
 govResemblance = {
@@ -136,7 +136,7 @@ govResemblance = {
       democracy = 0.1
     }
     voting_system = {
-      first_past_the_post = 0.2
+      first_past_the_post = 0.1
     }
     press_rights = {
       free_press = 0.1
@@ -390,6 +390,8 @@ hoiDivNames = {
   militia_brigade = "Militia Division"
 }
 
+airUnits = { interceptor tactical_bomber strategic_bomber }
+
 unitStrengths = {
   light_armor_brigade = 30.000
   armor_brigade = 30.000
@@ -521,8 +523,11 @@ practicals = {
   construction_practical = { fort naval_base }
 }
 
-war_industry = { artillery_factory small_arms_factory barrel_factory aeroplane_factory ammunition_factory }
+war_industry = { artillery_factory small_arms_factory barrel_factory aeroplane_factory ammunition_factory synthetic_oil_factory }
 heavy_industry = { artillery_factory small_arms_factory barrel_factory aeroplane_factory steamer_factory machine_parts_factory steel_factory cement_factory automobile_factory ammunition_factory electric_gear_factory }
+
+warIndustryBonus = 1.2
+heavyIndustryBonus = 1.1
 
 laws = {
   civil_law = { 
